@@ -1109,7 +1109,8 @@ class T5ContinualLearner:
                    progressive=True,
                    eval_every_N=1,
                    eval_on_all_tasks=False,
-                   data_replay_freq=-1):
+                   data_replay_freq=-1,
+                   save_path=None):
 
         print('task = ', task)
         print('progressive', progressive)
@@ -1468,6 +1469,7 @@ class T5ContinualLearner:
                 if self.early_stopping:
                     self.update_best_model(acc, task=task)
                 print(epoch, task, '->', val_acc[-1])
+                self._save_partial_state(save_path, task, epoch, val_acc)
 
             # During reverse phase, also evaluate previous tasks' test accuracy
             # using only that task's updated prompt (no other prompts)
@@ -1617,6 +1619,24 @@ class T5ContinualLearner:
             if self.early_stopping:
                 self.restore_best_model()
         return val_acc
+
+    def _save_partial_state(self, save_path, task, epoch, val_acc):
+        if save_path is None:
+            return
+        os.makedirs(save_path, exist_ok=True)
+        task_prompts = {}
+        for name, prompt in getattr(self, 'task_prompts', {}).items():
+            task_prompts[name] = prompt.detach().cpu().numpy()
+        state = {
+            'task': task,
+            'epoch': epoch,
+            'val_acc': val_acc,
+            'previous_prompts': self.previous_prompts.detach().cpu().numpy() if self.previous_prompts is not None else None,
+            'current_prompt': self.model.prompt.detach().cpu().numpy() if hasattr(self.model, 'prompt') else None,
+            'task_prompts': task_prompts,
+        }
+        np.save(os.path.join(save_path, 'partial_state.npy'), state, allow_pickle=True)
+        np.save(os.path.join(save_path, f'partial_{task}_epoch_{epoch}.npy'), state, allow_pickle=True)
     
     # Train model continually
     def train_continual(self,
@@ -1640,6 +1660,7 @@ class T5ContinualLearner:
                                           #eval_on_all_tasks=False, # too slow
                                           data_replay_freq=data_replay_freq,
                                           eval_on_all_tasks=eval_on_all_tasks,
+                                          save_path=save_path,
                                           )
             print(task, val_acc)
             results_dict[task] = val_acc
