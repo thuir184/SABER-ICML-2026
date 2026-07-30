@@ -13,8 +13,7 @@ start_time = time.time()
 
 def main(args):
     save_path = os.path.join(args.save_dir, args.save_name)
-    if not os.path.exists(save_path):
-        os.mkdir(save_path)
+    os.makedirs(save_path, exist_ok=True)
     task_list = args.task_list
 
     model_name = args.model_name

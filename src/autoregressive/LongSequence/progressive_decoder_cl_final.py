@@ -1,0 +1,2 @@
+from longsequence_decoder_FPP import ProgressiveDecoderPromptTrainer
+

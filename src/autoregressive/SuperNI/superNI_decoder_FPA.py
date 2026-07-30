@@ -1042,6 +1042,8 @@ class ProgressiveDecoderPromptTrainer:
                         finally:
                             self.current_prompt = saved_curr
                             self.previous_prompts = saved_prev
+                except Exception as e_rev:
+                    print("Warning: reverse eval loop failed:", e_rev)
 
         # Store own-task mean dir and SVD basis for future selection/parity
         try:

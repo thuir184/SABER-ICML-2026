@@ -415,10 +415,10 @@ class T5ContinualLearner:
             with torch.no_grad():
                 prompt = model.prompt.detach()
         else:
-        if embed_prompt:
-            prompt = mlp(model.prompt)
-        else:
-            prompt = model.prompt
+            if embed_prompt:
+                prompt = mlp(model.prompt)
+            else:
+                prompt = model.prompt
 
         if progressive:
             prev_block = self.previous_prompts_param if (self.reverse_phase_active and self.previous_prompts_param is not None) else self.previous_prompts
@@ -946,7 +946,7 @@ class T5ContinualLearner:
                 lm_labels = batch["target_ids"]
                 lm_labels[lm_labels[:, :] == tokenizer.pad_token_id] = -100
                 
-        model.zero_grad(set_to_none=True)
+                model.zero_grad(set_to_none=True)
                 encoder_outputs = model.encoder(attention_mask=source_mask_updated,
                                                 inputs_embeds=inputs_embeds,
                                                 head_mask=None,
@@ -1524,7 +1524,7 @@ class T5ContinualLearner:
                                 # (removed for parity) no per-epoch validation eval with historical queue
                         except Exception as e2:
                             print('Warning: reverse phase queue eval failed:', e2)
-            except Exception as e:
+                except Exception as e:
                     print('Warning: reverse phase test eval failed:', e)
 
         # Ensure reverse-phase updates are stored even if training ended mid-phase
@@ -1693,12 +1693,12 @@ class T5ContinualLearner:
                                                         print_outputs=True)
                                     results_dict['test'][num][test_task] = acc
                             else:
-                            acc = self.validate(self.tasks_data_dict[test_task]['test'],
-                                                test_task,
-                                                curr_prompt,
-                                                self.task_to_target_len[test_task],
-                                                print_outputs=True)
-                            results_dict['test'][num][test_task] = acc
+                                acc = self.validate(self.tasks_data_dict[test_task]['test'],
+                                                    test_task,
+                                                    curr_prompt,
+                                                    self.task_to_target_len[test_task],
+                                                    print_outputs=True)
+                                results_dict['test'][num][test_task] = acc
 
                 else:
                     acc = self.validate(self.tasks_data_dict[task]['test'],

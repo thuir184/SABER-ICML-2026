@@ -21,7 +21,7 @@ import torch
 
 
 class T5Dataset:
-    def __init__(self, tokenizer, task, cache_dir, pre_processed):
+    def __init__(self, tokenizer, task, cache_dir, pre_processed, seed=42):
         """Dataset class for T5 model experiments.
         Args:
             task (str): Name of the downstream task.
@@ -31,6 +31,7 @@ class T5Dataset:
         self.tokenizer = tokenizer
         self.cache_dir = cache_dir
         self.pre_processed=pre_processed
+        self.seed = seed
         self.glue_datasets = ['cola', 'sst2', 'mrpc', 'qqp', 'stsb', 'mnli', \
                               'mnli_mismatched', 'mnli_matched', 'qnli', 'rte', 'wnli', 'ax']
         self.superglue_datasets = ['copa', 'boolq', 'wic', 'wsc', 'cb', 'record', 'multirc', 'rte_superglue', 'wsc_bool']
@@ -161,15 +162,13 @@ class T5Dataset:
         """Function that returns final T5 dataloader."""
         cache_dir = self.cache_dir
         
-        # Set path variables for datasets
-        # Get relative paths to data directories
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(script_dir)
-        fixed_train_path = os.path.join(project_root, "data", "train")
-        fixed_test_path = os.path.join(project_root, "data", "test")
+        src_root = os.path.dirname(os.path.dirname(script_dir))
+        fixed_train_path = os.path.join(src_root, "data", "train")
+        fixed_test_path = os.path.join(src_root, "data", "test")
         
         if task in ['amazon']:
-            df = pd.read_csv('../datasets/src/data/'+task+'/'+split+'.csv', header=None)
+            df = pd.read_csv(os.path.join(src_root, "data", task, f"{split}.csv"), header=None)
             df = df.rename(columns={0: "label", 1: "title", 2: "content"})
             df['label'] = df['label'] - 1
             dataset = datasets.Dataset.from_pandas(df)
