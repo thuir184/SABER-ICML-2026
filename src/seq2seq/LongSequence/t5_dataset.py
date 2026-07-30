@@ -147,7 +147,7 @@ class T5Dataset:
         else:
             target = self.task_to_labels[task][examples[label_key]]
         target += ' </s>'
-        target = tokenizer(target, max_length=max_length_target, pad_to_max_length=True)
+        target = tokenizer(target, truncation=True, padding='max_length', max_length=max_length_target)
 
         dict_final = {"source_ids": source['input_ids'],
                       "source_mask": source['attention_mask'],
