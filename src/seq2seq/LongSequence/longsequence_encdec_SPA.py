@@ -1304,6 +1304,7 @@ class T5ContinualLearner:
                 if self.early_stopping:
                     self.update_best_model(acc, task=task)
                 print(epoch, task, '->', val_acc[-1])
+                self._print_epoch_score(task, epoch, val_acc[-1])
                 self._save_partial_state(save_path, task, epoch, val_acc, checkpoint_results, task_index)
 
             # During reverse phase, evaluate previous tasks after each epoch:
@@ -1400,6 +1401,25 @@ class T5ContinualLearner:
             except Exception as e:
                 print('Global prompt norm print failed:', e)
         return val_acc
+
+    def _format_score(self, score):
+        if isinstance(score, (list, tuple, np.ndarray)):
+            try:
+                return float(np.mean(score))
+            except Exception:
+                return score
+        try:
+            return float(score)
+        except Exception:
+            return score
+
+    def _print_epoch_score(self, task, epoch, score):
+        score_out = self._format_score(score)
+        best_out = self._format_score(getattr(self, 'best_acc', score_out))
+        if isinstance(score_out, float):
+            print(f"[EpochScore] task={task} epoch={epoch} val={score_out:.6f} best={best_out:.6f}")
+        else:
+            print(f"[EpochScore] task={task} epoch={epoch} val={score_out} best={best_out}")
 
     def _save_partial_state(self, save_path, task, epoch, val_acc, results_dict=None, task_index=None):
         if save_path is None:
