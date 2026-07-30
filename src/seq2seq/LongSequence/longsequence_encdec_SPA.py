@@ -961,14 +961,19 @@ class T5ContinualLearner:
                    eval_every_N=1,
                    eval_on_all_tasks=False,
                    data_replay_freq=-1,
-                   save_path=None):
+                   save_path=None,
+                   start_epoch=0,
+                   initial_prompt=None,
+                   initial_val_acc=None,
+                   task_index=None,
+                   checkpoint_results=None):
 
         print('task = ', task)
         print('progressive', progressive)
         if progressive:
             assert self.prefix_len > 0  # can only do progressive prompts when prompt tuning
             print('progressive prompts')
-        if self.early_stopping:
+        if self.early_stopping and start_epoch == 0:
             self.best_acc = 0.0  # re-setting best acc
 
         if self.prefix_MLPs != None:
@@ -980,8 +985,11 @@ class T5ContinualLearner:
         model = self.model
 
         with torch.no_grad():
-            model.prompt = nn.Parameter(torch.tensor(self.init_new_prompt(self.prefix_len),
-                                                    requires_grad=True))
+            if initial_prompt is None:
+                prompt_init = torch.tensor(self.init_new_prompt(self.prefix_len))
+            else:
+                prompt_init = torch.as_tensor(initial_prompt).detach().cpu()
+            model.prompt = nn.Parameter(prompt_init.to(self.device), requires_grad=True)
             self.optimizer = self.get_optimizer(self.lr, self.weight_decay,
                                                 task=task)
         model.to(self.device)
@@ -996,7 +1004,9 @@ class T5ContinualLearner:
         has_prev_prompts = self.previous_prompts is not None and self.previous_prompts.shape[0] > 0
         effective_epochs = epochs if has_prev_prompts else min(epochs, normal_phase_epochs)
 
-        val_acc = []
+        val_acc = list(initial_val_acc) if initial_val_acc is not None else []
+        if start_epoch > 0:
+            print(f"Resuming task {task} from epoch {start_epoch}")
 
         # Print gradient norms and direction similarity (own-task SVD v1 vs current-task grad dir) for previous prompts
         try:
@@ -1023,7 +1033,7 @@ class T5ContinualLearner:
         except Exception as e:
             print("Warning: prev prompt diagnostics failed:", e)
 
-        for epoch in range(effective_epochs):
+        for epoch in range(start_epoch, effective_epochs):
             print(epoch)
             model.train()
             if self.prefix_MLPs != None:
@@ -1294,7 +1304,7 @@ class T5ContinualLearner:
                 if self.early_stopping:
                     self.update_best_model(acc, task=task)
                 print(epoch, task, '->', val_acc[-1])
-                self._save_partial_state(save_path, task, epoch, val_acc)
+                self._save_partial_state(save_path, task, epoch, val_acc, checkpoint_results, task_index)
 
             # During reverse phase, evaluate previous tasks after each epoch:
             if self.reverse_phase_active and self.previous_prompts_param is not None:
@@ -1391,7 +1401,7 @@ class T5ContinualLearner:
                 print('Global prompt norm print failed:', e)
         return val_acc
 
-    def _save_partial_state(self, save_path, task, epoch, val_acc):
+    def _save_partial_state(self, save_path, task, epoch, val_acc, results_dict=None, task_index=None):
         if save_path is None:
             return
         os.makedirs(save_path, exist_ok=True)
@@ -1408,6 +1418,63 @@ class T5ContinualLearner:
         }
         np.save(os.path.join(save_path, 'partial_state.npy'), state, allow_pickle=True)
         np.save(os.path.join(save_path, f'partial_{task}_epoch_{epoch}.npy'), state, allow_pickle=True)
+        self._save_training_checkpoint(save_path, task, epoch, val_acc, results_dict, task_index, stage='epoch')
+
+    def _save_training_checkpoint(self, save_path, task, epoch, val_acc, results_dict=None, task_index=None, stage='epoch'):
+        if save_path is None:
+            return
+        ckpt_dir = os.path.join(save_path, 'checkpoints')
+        os.makedirs(ckpt_dir, exist_ok=True)
+        task_prompts = {k: v.detach().cpu() for k, v in getattr(self, 'task_prompts', {}).items()}
+        global_snapshots = {k: v.detach().cpu() for k, v in getattr(self, 'task_to_global_snapshot', {}).items()}
+        state = {
+            'stage': stage,
+            'task': task,
+            'task_index': task_index,
+            'next_task_index': (task_index + 1) if stage == 'task_complete' and task_index is not None else task_index,
+            'epoch': epoch,
+            'next_epoch': 0 if stage == 'task_complete' else epoch + 1,
+            'val_acc': list(val_acc) if val_acc is not None else [],
+            'results_dict': results_dict if results_dict is not None else {},
+            'previous_prompts': self.previous_prompts.detach().cpu() if self.previous_prompts is not None else None,
+            'current_prompt': self.model.prompt.detach().cpu() if hasattr(self.model, 'prompt') else None,
+            'global_prompt': self.global_prompt.detach().cpu() if getattr(self, 'global_prompt', None) is not None else None,
+            'task_prompts': task_prompts,
+            'learned_tasks': list(getattr(self, 'learned_tasks', [])),
+            'task_to_global_snapshot': global_snapshots,
+            'best_prompt': torch.as_tensor(self.best_prompt).detach().cpu() if hasattr(self, 'best_prompt') else None,
+            'best_acc': float(getattr(self, 'best_acc', 0.0)),
+            'task_to_svd_basis': getattr(self, 'task_to_svd_basis', {}),
+            'cumulative_restrict_basis': getattr(self, 'cumulative_restrict_basis', {}),
+            'selection_method': getattr(self, 'selection_method', 'proj_cos'),
+        }
+        latest_path = os.path.join(ckpt_dir, 'latest.pt')
+        epoch_path = os.path.join(ckpt_dir, f'checkpoint_{task}_epoch_{epoch}.pt')
+        torch.save(state, latest_path)
+        torch.save(state, epoch_path)
+
+    def load_training_checkpoint(self, checkpoint_path):
+        try:
+            state = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        except TypeError:
+            state = torch.load(checkpoint_path, map_location=self.device)
+        print(f"Loading training checkpoint: {checkpoint_path}")
+        if state.get('previous_prompts') is not None:
+            self.previous_prompts = state['previous_prompts'].to(self.device)
+        if state.get('current_prompt') is not None:
+            self.model.prompt = nn.Parameter(state['current_prompt'].to(self.device), requires_grad=True)
+        if state.get('global_prompt') is not None and getattr(self, 'global_prompt', None) is not None:
+            self.global_prompt = nn.Parameter(state['global_prompt'].to(self.device), requires_grad=True)
+        self.task_prompts = {k: v.to(self.device) for k, v in state.get('task_prompts', {}).items()}
+        self.learned_tasks = list(state.get('learned_tasks', []))
+        self.task_to_global_snapshot = {k: v.to(self.device) for k, v in state.get('task_to_global_snapshot', {}).items()}
+        if state.get('best_prompt') is not None:
+            self.best_prompt = state['best_prompt'].detach().cpu().numpy()
+        self.best_acc = float(state.get('best_acc', getattr(self, 'best_acc', 0.0)))
+        self.task_to_svd_basis = state.get('task_to_svd_basis', getattr(self, 'task_to_svd_basis', {}))
+        self.cumulative_restrict_basis = state.get('cumulative_restrict_basis', getattr(self, 'cumulative_restrict_basis', {}))
+        self.selection_method = state.get('selection_method', getattr(self, 'selection_method', 'proj_cos'))
+        return state
     
     # Train model continually
     def train_continual(self,
@@ -1418,13 +1485,27 @@ class T5ContinualLearner:
                         eval_every_N=1,
                         test_eval_after_every_task=False, # only needed for methods with catastrophic forgetting
                         data_replay_freq=-1,
+                        resume_state=None,
                         ):
-        results_dict = {}
-        if self.get_test_subset: results_dict['test'] = {}
+        results_dict = resume_state.get('results_dict', {}) if resume_state is not None else {}
+        if self.get_test_subset and 'test' not in results_dict:
+            results_dict['test'] = {}
+        resume_task_index = resume_state.get('next_task_index') if resume_state is not None else None
+        if resume_task_index is None and resume_state is not None and resume_state.get('task') in task_list:
+            resume_task_index = task_list.index(resume_state.get('task'))
+        resume_next_epoch = int(resume_state.get('next_epoch', 0)) if resume_state is not None else 0
 
         for num, task in enumerate(task_list):
+            if resume_task_index is not None and num < resume_task_index:
+                print(f"Skipping completed task from checkpoint: {task}")
+                continue
             eval_on_all_tasks = False if progressive or len(task_list)==1 else True
             eval_frq = eval_every_N if not eval_on_all_tasks else int(epochs//3)
+            is_resume_task = (
+                resume_state is not None
+                and num == resume_task_index
+                and resume_state.get('stage') != 'task_complete'
+            )
             val_acc = self.train_one_task(task, epochs,
                                           progressive=progressive,
                                           eval_every_N=eval_frq,
@@ -1432,7 +1513,13 @@ class T5ContinualLearner:
                                           data_replay_freq=data_replay_freq,
                                           eval_on_all_tasks=eval_on_all_tasks,
                                           save_path=save_path,
+                                          start_epoch=resume_next_epoch if is_resume_task else 0,
+                                          initial_prompt=resume_state.get('current_prompt') if is_resume_task else None,
+                                          initial_val_acc=resume_state.get('val_acc') if is_resume_task else None,
+                                          task_index=num,
+                                          checkpoint_results=results_dict,
                                           )
+            resume_state = None
             print(task, val_acc)
             results_dict[task] = val_acc
 
@@ -1484,6 +1571,7 @@ class T5ContinualLearner:
                                         use_global_prompt=False)
                     results_dict['test'][task] = acc
             np.save(os.path.join(save_path, 'results_dict.npy'), results_dict)
+            self._save_training_checkpoint(save_path, task, epochs - 1, val_acc, results_dict, num, stage='task_complete')
 
         return results_dict
 

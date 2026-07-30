@@ -54,3 +54,39 @@ python main.py \
 
 After the smoke test works, increase `--model_name`, `--base_model_name`, `--batch_size`, `--select_k_per_class` or `--k_per_class`, `--num_epochs`, and seeds.
 
+## Checkpoints And Resume
+
+Seq2Seq LongSequence runs save lightweight prompt checkpoints under:
+
+```text
+/kaggle/working/runs/<save_name>/checkpoints/
+```
+
+Check what has been saved:
+
+```bash
+find /kaggle/working/runs -type f | sort
+```
+
+Resume from the latest checkpoint:
+
+```bash
+cd /kaggle/working/SABER-ICML-2026/src/seq2seq/LongSequence
+python train.py \
+  --save_dir /kaggle/working/runs \
+  --save_name paper_like_t5_large_proj_cos_seed_1_autosave \
+  --task_list sst2 wic mnli boolq multirc \
+  --model_name t5-large \
+  --cache_dir /kaggle/working/hf_cache \
+  --batch_size 4 \
+  --num_epochs 10 \
+  --prefix_len 10 \
+  --freeze_weights 1 \
+  --select_k_per_class 1000 \
+  --pre_processed 1 \
+  --seed 1 \
+  --selection_method proj_cos \
+  --resume_from_checkpoint /kaggle/working/runs/paper_like_t5_large_proj_cos_seed_1_autosave/checkpoints/latest.pt
+```
+
+Save a Kaggle version after long runs so `/kaggle/working` outputs and logs are preserved.
