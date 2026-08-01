@@ -166,8 +166,50 @@ class T5Dataset:
         src_root = os.path.dirname(os.path.dirname(script_dir))
         fixed_train_path = os.path.join(src_root, "data", "train")
         fixed_test_path = os.path.join(src_root, "data", "test")
-        
-        if task in ['amazon']:
+
+        fixed_train_files = {
+            "imdb": "imdb_1k.npy",
+            "sst2": "sst2_1k.npy",
+            "yelp_review_full": "yelp_1k.npy",
+            "amazon": "amazon_1k.npy",
+            "rte": "rte_1k.npy",
+            "wic": "wic_1k.npy",
+            "multirc": "multirc_1k.npy",
+            "boolq": "boolq_1k.npy",
+            "ag_news": "ag_news_1k.npy",
+            "dbpedia_14": "dbpedia_14_1k.npy",
+            "qqp": "qqp_1k.npy",
+            "mnli": "mnli_1k.npy",
+            "yahoo_answers_topics": "yahoo_1k.npy",
+        }
+        fixed_eval_files = {
+            "amazon": "amazon.npy",
+            "mnli": "mnli_test.npy",
+            "wic": "super_glue_wic.npy",
+            "multirc": "super_glue_multirc.npy",
+            "sst2": "sst2.npy",
+            "boolq": "super_glue_boolq.npy",
+            "yelp_review_full": "yelp_review_full.npy",
+            "imdb": "imdb.npy",
+            "qqp": "glue_qqp.npy",
+            "dbpedia_14": "dbpedia_14.npy",
+            "ag_news": "ag_news.npy",
+            "yahoo_answers_topics": "yahoo_answers_topics.npy",
+        }
+
+        dataset = None
+        if self.pre_processed and split == 'train' and task in fixed_train_files:
+            local_path = os.path.join(fixed_train_path, fixed_train_files[task])
+            if os.path.exists(local_path):
+                dataset = Dataset.from_dict(np.load(local_path, allow_pickle=True).item())
+        if dataset is None and split != 'train' and task in fixed_eval_files:
+            local_path = os.path.join(fixed_test_path, fixed_eval_files[task])
+            if os.path.exists(local_path):
+                dataset = Dataset.from_dict(np.load(local_path, allow_pickle=True).item())
+
+        if dataset is not None:
+            pass
+        elif task in ['amazon']:
             df = pd.read_csv(os.path.join(src_root, "data", task, f"{split}.csv"), header=None)
             df = df.rename(columns={0: "label", 1: "title", 2: "content"})
             df['label'] = df['label'] - 1
