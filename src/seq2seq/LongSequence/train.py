@@ -2,7 +2,7 @@ import torch
 import pandas as pd
 import numpy as np
 from tqdm.auto import tqdm
-import logging, os, argparse
+import logging, os, argparse, json
 import time
 
 
@@ -10,6 +10,91 @@ from t5_continual import T5ContinualLearner
 
     
 start_time = time.time()
+
+
+def _jsonable(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if torch.is_tensor(value):
+        return value.detach().cpu().tolist()
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
+
+
+def _to_scalar(value):
+    if isinstance(value, dict):
+        return None
+    try:
+        arr = np.asarray(value, dtype=float)
+        return float(np.mean(arr)) if arr.size else None
+    except Exception:
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+
+def print_results_snapshot(results_dict, task_order=None, tag="final"):
+    task_order = task_order or [k for k in results_dict.keys() if k != "test"]
+    test_scores = {}
+    test_obj = results_dict.get("test", {})
+    if isinstance(test_obj, dict):
+        nested_steps = [k for k, v in test_obj.items() if isinstance(v, dict)]
+        if nested_steps:
+            last_step = sorted(nested_steps)[-1]
+            test_obj = test_obj[last_step]
+        for task, value in test_obj.items():
+            scalar = _to_scalar(value)
+            if scalar is not None:
+                test_scores[str(task)] = scalar
+
+    validation = {}
+    for task in task_order:
+        if task in results_dict and task != "test":
+            history = results_dict[task]
+            if isinstance(history, (list, tuple, np.ndarray)):
+                vals = [_to_scalar(v) for v in history]
+                vals = [v for v in vals if v is not None]
+                validation[task] = {
+                    "history": vals,
+                    "final": vals[-1] if vals else None,
+                    "best": max(vals) if vals else None,
+                }
+            else:
+                scalar = _to_scalar(history)
+                validation[task] = {
+                    "history": [scalar] if scalar is not None else [],
+                    "final": scalar,
+                    "best": scalar,
+                }
+
+    payload = {
+        "tag": tag,
+        "tasks": list(task_order),
+        "test": test_scores,
+        "test_average": float(np.mean(list(test_scores.values()))) if test_scores else None,
+        "validation": validation,
+    }
+
+    print("[SABER_RESULTS_JSON_BEGIN]", flush=True)
+    print(json.dumps(_jsonable(payload), sort_keys=True), flush=True)
+    print("[SABER_RESULTS_JSON_END]", flush=True)
+    if test_scores:
+        print("[SABER_RESULTS_TEST_TABLE]", flush=True)
+        for task in task_order:
+            if task in test_scores:
+                print(f"{task}\t{test_scores[task]:.6f}", flush=True)
+        print(f"AVERAGE\t{payload['test_average']:.6f}", flush=True)
+    print("[SABER_RESULTS_VAL_TABLE]", flush=True)
+    for task in task_order:
+        if task in validation:
+            row = validation[task]
+            print(f"{task}\tfinal={row['final']:.6f}\tbest={row['best']:.6f}", flush=True)
 
 def main(args):
     save_path = os.path.join(args.save_dir, args.save_name)
@@ -53,6 +138,7 @@ def main(args):
         print('Multi task learning')
         results_dict = continual_learner.multi_task_training(num_epochs=args.num_epochs, save_path=save_path)
         np.save(os.path.join(save_path, 'results_dict.npy'), results_dict)
+        print_results_snapshot(results_dict, task_order=task_list, tag=f"{args.save_name}:final")
 
     else:
         if args.num_epochs<=50:
@@ -73,6 +159,7 @@ def main(args):
                                                         )
         np.save(os.path.join(save_path, 'results_dict.npy'), results_dict)
         np.save(os.path.join(save_path, 'prompts.npy'), continual_learner.previous_prompts.detach().cpu().numpy())
+        print_results_snapshot(results_dict, task_order=task_list, tag=f"{args.save_name}:final")
         
         print(f"Results saved to {save_path}")
         end_time = time.time()

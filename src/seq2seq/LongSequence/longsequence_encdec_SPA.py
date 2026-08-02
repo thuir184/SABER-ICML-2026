@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import time
 import random
+import json
 
 from datasets.formatting.formatting import NumpyArrowExtractor
 
@@ -16,6 +17,91 @@ from copy import deepcopy
 from torch.optim import AdamW
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 from sklearn.metrics import matthews_corrcoef, f1_score
+
+
+def _jsonable(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if torch.is_tensor(value):
+        return value.detach().cpu().tolist()
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
+
+
+def _to_scalar(value):
+    if isinstance(value, dict):
+        return None
+    try:
+        arr = np.asarray(value, dtype=float)
+        return float(np.mean(arr)) if arr.size else None
+    except Exception:
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+
+def print_results_snapshot(results_dict, task_order=None, tag="task"):
+    task_order = task_order or [k for k in results_dict.keys() if k != "test"]
+    test_scores = {}
+    test_obj = results_dict.get("test", {})
+    if isinstance(test_obj, dict):
+        nested_steps = [k for k, v in test_obj.items() if isinstance(v, dict)]
+        if nested_steps:
+            last_step = sorted(nested_steps)[-1]
+            test_obj = test_obj[last_step]
+        for task, value in test_obj.items():
+            scalar = _to_scalar(value)
+            if scalar is not None:
+                test_scores[str(task)] = scalar
+
+    validation = {}
+    for task in task_order:
+        if task in results_dict and task != "test":
+            history = results_dict[task]
+            if isinstance(history, (list, tuple, np.ndarray)):
+                vals = [_to_scalar(v) for v in history]
+                vals = [v for v in vals if v is not None]
+                validation[task] = {
+                    "history": vals,
+                    "final": vals[-1] if vals else None,
+                    "best": max(vals) if vals else None,
+                }
+            else:
+                scalar = _to_scalar(history)
+                validation[task] = {
+                    "history": [scalar] if scalar is not None else [],
+                    "final": scalar,
+                    "best": scalar,
+                }
+
+    payload = {
+        "tag": tag,
+        "tasks": list(task_order),
+        "test": test_scores,
+        "test_average": float(np.mean(list(test_scores.values()))) if test_scores else None,
+        "validation": validation,
+    }
+
+    print("[SABER_RESULTS_JSON_BEGIN]", flush=True)
+    print(json.dumps(_jsonable(payload), sort_keys=True), flush=True)
+    print("[SABER_RESULTS_JSON_END]", flush=True)
+    if test_scores:
+        print("[SABER_RESULTS_TEST_TABLE]", flush=True)
+        for task in task_order:
+            if task in test_scores:
+                print(f"{task}\t{test_scores[task]:.6f}", flush=True)
+        print(f"AVERAGE\t{payload['test_average']:.6f}", flush=True)
+    print("[SABER_RESULTS_VAL_TABLE]", flush=True)
+    for task in task_order:
+        if task in validation:
+            row = validation[task]
+            print(f"{task}\tfinal={row['final']:.6f}\tbest={row['best']:.6f}", flush=True)
 
 
 class ResMLP(torch.nn.Module):
@@ -1591,6 +1677,7 @@ class T5ContinualLearner:
                                         use_global_prompt=False)
                     results_dict['test'][task] = acc
             np.save(os.path.join(save_path, 'results_dict.npy'), results_dict)
+            print_results_snapshot(results_dict, task_order=task_list, tag=f"after_task:{task}")
             self._save_training_checkpoint(save_path, task, epochs - 1, val_acc, results_dict, num, stage='task_complete')
 
         return results_dict
@@ -1652,6 +1739,7 @@ class T5ContinualLearner:
 
             if save_path!='':
                 np.save(os.path.join(save_path, 'results_dict.npy'), results_dict)
+            print_results_snapshot(results_dict, task_order=list(tasks_data_dict), tag=f"multitask_epoch:{epoch}")
             pbar.close()
 
         return results_dict
