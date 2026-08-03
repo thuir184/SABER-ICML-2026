@@ -59,10 +59,22 @@ def print_results_snapshot(results_dict, task_order=None, tag="task"):
             scalar = _to_scalar(value)
             if scalar is not None:
                 test_scores[str(task)] = scalar
+    bigp_scores = {}
+    bigp_obj = results_dict.get("test_with_bigp", {})
+    if isinstance(bigp_obj, dict):
+        nested_steps = [k for k, v in bigp_obj.items() if isinstance(v, dict)]
+        if nested_steps:
+            last_step = sorted(nested_steps)[-1]
+            bigp_obj = bigp_obj[last_step]
+        for task, value in bigp_obj.items():
+            scalar = _to_scalar(value)
+            if scalar is not None:
+                bigp_scores[str(task)] = scalar
 
     validation = {}
+    reserved = {"test", "test_with_bigp"}
     for task in task_order:
-        if task in results_dict and task != "test":
+        if task in results_dict and task not in reserved:
             history = results_dict[task]
             if isinstance(history, (list, tuple, np.ndarray)):
                 vals = [_to_scalar(v) for v in history]
@@ -85,6 +97,8 @@ def print_results_snapshot(results_dict, task_order=None, tag="task"):
         "tasks": list(task_order),
         "test": test_scores,
         "test_average": float(np.mean(list(test_scores.values()))) if test_scores else None,
+        "test_with_bigp": bigp_scores,
+        "test_with_bigp_average": float(np.mean(list(bigp_scores.values()))) if bigp_scores else None,
         "validation": validation,
     }
 
@@ -97,6 +111,12 @@ def print_results_snapshot(results_dict, task_order=None, tag="task"):
             if task in test_scores:
                 print(f"{task}\t{test_scores[task]:.6f}", flush=True)
         print(f"AVERAGE\t{payload['test_average']:.6f}", flush=True)
+    if bigp_scores:
+        print("[SABER_RESULTS_TEST_WITH_BIGP_TABLE]", flush=True)
+        for task in task_order:
+            if task in bigp_scores:
+                print(f"{task}\t{bigp_scores[task]:.6f}", flush=True)
+        print(f"AVERAGE\t{payload['test_with_bigp_average']:.6f}", flush=True)
     print("[SABER_RESULTS_VAL_TABLE]", flush=True)
     for task in task_order:
         if task in validation:
@@ -1663,6 +1683,7 @@ class T5ContinualLearner:
                                                                 self.task_to_target_len[test_task],
                                                                 print_outputs=False,
                                                                 use_global_prompt=False)
+                                    results_dict.setdefault('test_with_bigp', {}).setdefault(num, {})[test_task] = acc_with_gp
                                     acc_with_gp_mean = float(np.mean(acc_with_gp)) if isinstance(acc_with_gp, (list, tuple, np.ndarray)) else float(acc_with_gp)
                                     print(f"[TestWithBigP] step={num} task={test_task} acc={acc_with_gp_mean:.4f}")
                             except Exception as e:
@@ -1676,6 +1697,21 @@ class T5ContinualLearner:
                                         print_outputs=True,
                                         use_global_prompt=False)
                     results_dict['test'][task] = acc
+                    if task in self.task_to_global_snapshot and task in self.task_prompts:
+                        try:
+                            gp_snap = self.task_to_global_snapshot[task]
+                            prompt_with_gp = torch.cat([gp_snap, self.task_prompts[task]], dim=0).to(self.device)
+                            acc_with_gp = self.validate(self.tasks_data_dict[task]['test'],
+                                                        task,
+                                                        prompt_with_gp,
+                                                        self.task_to_target_len[task],
+                                                        print_outputs=False,
+                                                        use_global_prompt=False)
+                            results_dict.setdefault('test_with_bigp', {})[task] = acc_with_gp
+                            acc_with_gp_mean = float(np.mean(acc_with_gp)) if isinstance(acc_with_gp, (list, tuple, np.ndarray)) else float(acc_with_gp)
+                            print(f"[TestWithBigP] task={task} acc={acc_with_gp_mean:.4f}")
+                        except Exception as e:
+                            print('Warning: final BigP test eval failed:', e)
             np.save(os.path.join(save_path, 'results_dict.npy'), results_dict)
             print_results_snapshot(results_dict, task_order=task_list, tag=f"after_task:{task}")
             self._save_training_checkpoint(save_path, task, epochs - 1, val_acc, results_dict, num, stage='task_complete')
