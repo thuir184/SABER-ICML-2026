@@ -73,6 +73,18 @@ class T5Dataset:
         if 'stsb' in task: self.label_key = 'similarity_score'
         if task=='record': self.label_key = 'answers'
 
+    def _label_key_for(self, obj):
+        keys = getattr(obj, "column_names", None)
+        if keys is None:
+            keys = obj.keys()
+        if self.label_key in keys:
+            return self.label_key
+        if "label" in keys:
+            return "label"
+        if "topic" in keys:
+            return "topic"
+        return self.label_key
+
     
     def save_multirc_questions_idx(self, val_ds):
         """Save idx of multirc questions (needed later for test metric computation)"""
@@ -94,7 +106,7 @@ class T5Dataset:
         if self.task in ['stsb', 'record', 'wsc']:
             idx_total = np.random.choice(np.arange(ds.shape[0]), min(k,ds.shape[0]), replace=False)
         else:
-            label_key = self.label_key
+            label_key = self._label_key_for(ds)
             N = len(ds[label_key])
             idx_total = np.array([], dtype='int64')
 
@@ -120,7 +132,7 @@ class T5Dataset:
         """Function to preprocess raw input & label text into tokenized dictionary"""
         tokenizer = self.tokenizer
         keys = self.task_to_keys[task]
-        label_key = self.label_key
+        label_key = self._label_key_for(examples)
 
         if keys[1]!=None:
             if task=='record':
