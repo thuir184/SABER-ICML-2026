@@ -181,6 +181,8 @@ class T5Dataset:
             "qqp": "qqp_1k.npy",
             "mnli": "mnli_1k.npy",
             "yahoo_answers_topics": "yahoo_1k.npy",
+            "cb": "cb_1k.npy",
+            "copa": "copa_1k.npy",
         }
         fixed_eval_files = {
             "amazon": "amazon.npy",
@@ -195,6 +197,9 @@ class T5Dataset:
             "dbpedia_14": "dbpedia_14.npy",
             "ag_news": "ag_news.npy",
             "yahoo_answers_topics": "yahoo_answers_topics.npy",
+            "rte": "glue_rte.npy",
+            "cb": "super_glue_cb.npy",
+            "copa": "super_glue_copa.npy",
         }
 
         dataset = None
